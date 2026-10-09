@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RepoHub</title>
+<style>
+  :root { --bg:#0f1115; --panel:#171a21; --line:#262b36; --fg:#e6e8ee; --dim:#8a92a3; --accent:#4c8dff; --ok:#3ecf8e; --bad:#ff6b6b; --warn:#f5b84c; }
+  * { box-sizing: border-box; }
+  body { margin:0; height:100vh; display:grid; grid-template-columns: 340px 1fr; background:var(--bg); color:var(--fg); font:14px system-ui, sans-serif; }
+  aside { border-right:1px solid var(--line); display:flex; flex-direction:column; min-height:0; }
+  header { padding:12px; border-bottom:1px solid var(--line); display:flex; gap:6px; flex-wrap:wrap; }
+  input, button, textarea { font:inherit; border-radius:6px; border:1px solid var(--line); background:var(--panel); color:var(--fg); padding:6px 10px; }
+  input, textarea { min-width:0; } header input { flex:1; }
+  button { cursor:pointer; } button:hover { border-color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button.danger { background:var(--warn); border-color:var(--warn); color:#111; }
+  #list { overflow:auto; flex:1; }
+  .repo { padding:10px 12px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .repo.sel { background:var(--panel); }
+  .repo b { display:block; overflow:hidden; text-overflow:ellipsis; } .repo small { color:var(--dim); }
+  .badge { float:right; font-size:11px; padding:1px 7px; border-radius:99px; border:1px solid var(--line); color:var(--dim); }
+  .badge.running { color:var(--ok); border-color:var(--ok); } .badge.error { color:var(--bad); border-color:var(--bad); }
+  main { display:grid; grid-template-rows:auto 1fr 220px; min-width:0; min-height:0; }
+  #bar { padding:10px 14px; border-bottom:1px solid var(--line); display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  #bar .title { flex:1; font-weight:600; min-width:120px; } #actions { display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  #view { min-height:0; overflow:auto; }
+  iframe { width:100%; height:100%; border:0; background:#fff; }
+  #empty { display:grid; place-items:center; color:var(--dim); height:100%; }
+  #readme { margin:0; padding:14px; white-space:pre-wrap; color:var(--dim); font:12px ui-monospace, Consolas, monospace; }
+  #term { margin:0; padding:8px 12px; overflow:auto; background:#0a0c10; border-top:1px solid var(--line); font:12px ui-monospace, Consolas, monospace; white-space:pre-wrap; }
+  dialog { background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:10px; width:min(640px, 92vw); padding:18px; }
+  dialog::backdrop { background:rgba(0,0,0,.6); }
+  dialog h3 { margin:0 0 6px; } dialog p { color:var(--dim); margin:6px 0 12px; }
+  dialog label { display:block; margin:10px 0 4px; color:var(--dim); font-size:12px; }
+  dialog input, dialog textarea { width:100%; font-family:ui-monospace, Consolas, monospace; font-size:13px; }
+  dialog textarea { height:260px; resize:vertical; }
+  .cmd { background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:8px 10px; font:13px ui-monospace, Consolas, monospace; margin:4px 0; word-break:break-all; }
+  #overlay { position:fixed; inset:0; background:rgba(0,0,0,.75); display:none; place-items:center; z-index:10; font-size:16px; }
+  #overlay.show { display:grid; }
+  .row { display:flex; gap:8px; justify-content:flex-end; margin-top:14px; flex-wrap:wrap; }
+</style>
+</head>
+<body>
+<aside>
+  <header>
+    <input id="token" type="password" placeholder="GitHub PAT (or set GITHUB_TOKEN)">
+    <button id="save">Save</button>
+    <button id="sync" class="primary">Sync stars</button>
+    <button id="restart" title="Restart the RepoHub server (stops running apps)">↻ Restart</button>
+    <input id="filter" placeholder="Filter…" style="flex-basis:100%">
+  </header>
+  <div id="list"></div>
+</aside>
+<main>
+  <div id="bar"><span class="title" id="title">Select a repository</span><span id="actions"></span></div>
+  <div id="view"><div id="empty">Start a web app to preview it here</div></div>
+  <pre id="term"></pre>
+</main>
+
+<div id="overlay"><div id="overlay-text">Restarting RepoHub…</div></div>
+
+<dialog id="dlg-trust">
+  <h3 id="trust-title">Run third-party code?</h3>
+  <p>This will execute the commands below on your computer, with your user's permissions. Only continue for repositories you trust. You'll be asked again if the commands change.</p>
+  <div id="trust-cmds"></div>
+  <div class="row"><button id="trust-cancel">Cancel</button><button id="trust-ok" class="danger">Trust &amp; continue</button></div>
+</dialog>
+
+<dialog id="dlg-cmd">
+  <h3>Commands</h3>
+  <p>Override what RepoHub detected. Use <code>{PORT}</code> where the app should listen; it's replaced with a free port and also exported as <code>PORT</code>. Leave a field empty to use the detected command.</p>
+  <label>Install command <span id="cmd-det-install"></span></label><input id="cmd-install" spellcheck="false">
+  <label>Start command <span id="cmd-det-start"></span></label><input id="cmd-start" spellcheck="false">
+  <div class="row"><button id="cmd-cancel">Cancel</button><button id="cmd-save" class="primary">Save</button></div>
+</dialog>
+
+<dialog id="dlg-env">
+  <h3>.env</h3>
+  <p>Environment file read by the app (and by Docker Compose's <code>env_file</code>). Stored in the repo folder.</p>
+  <textarea id="env-text" spellcheck="false" placeholder="KEY=value"></textarea>
+  <div class="row">
+    <button id="env-example">Load .env.example</button>
+    <button id="env-key">Insert random 64-hex key</button>
+    <span style="flex:1"></span>
+    <button id="env-cancel">Cancel</button><button id="env-save" class="primary">Save</button>
+  </div>
+</dialog>
+
+<script>
+let repos = [], selected = null, es = null, shownView = null, envExample = null;
+const $ = (id) => document.getElementById(id);
+const api = (p, method = 'POST', body) =>
+  fetch('/api' + p, { method, headers: { 'Content-Type': 'application/json' }, body: body && JSON.stringify(body) });
+const cur = () => repos.find(x => x.id === selected);
+
+let lastSnapshot = '';
+async function refresh() {
+  const text = await (await api('/repos', 'GET')).text();
+  if (text === lastSnapshot) return;   // nothing changed: skip all DOM work
+  lastSnapshot = text;
+  repos = JSON.parse(text);
+  renderList(); renderBar(); renderPreview();
+}
+
+function renderList() {
+  const q = $('filter').value.toLowerCase();
+  const scroll = $('list').scrollTop;
+  $('list').innerHTML = '';
+  requestAnimationFrame(() => { $('list').scrollTop = scroll; });
+  repos.filter(r => !q || (r.fullName + (r.description || '')).toLowerCase().includes(q))
+    .sort((a, b) => a.fullName.localeCompare(b.fullName))
+    .forEach(r => {
+      const el = document.createElement('div');
+      el.className = 'repo' + (r.id === selected ? ' sel' : '');
+      el.innerHTML = `<span class="badge ${r.error ? 'error' : r.status}">${r.status}</span><b></b><small></small>`;
+      el.querySelector('b').textContent = r.fullName;
+      el.querySelector('small').textContent = [r.language, r.detected?.type, r.description].filter(Boolean).join(' · ');
+      el.onclick = () => select(r.id);
+      $('list').appendChild(el);
+    });
+}
+
+function select(id) {
+  selected = id; shownView = null;
+  if (es) es.close();
+  $('term').textContent = '';
+  es = new EventSource(`/api/repos/${id}/logs`);
+  // Batch incoming lines into one DOM write per frame, and cap how much text the pane holds.
+  let queue = [], scheduled = false;
+  es.onmessage = (e) => {
+    queue.push(JSON.parse(e.data));
+    if (scheduled) return;
+    scheduled = true;
+    requestAnimationFrame(() => {
+      scheduled = false;
+      const t = $('term'), atEnd = t.scrollHeight - t.scrollTop - t.clientHeight < 40;
+      t.append(queue.join('\n') + '\n'); queue = [];
+      while (t.textContent.length > 200000 && t.firstChild) t.removeChild(t.firstChild);
+      if (atEnd) t.scrollTop = t.scrollHeight;
+    });
+  };
+  renderList(); renderBar(); renderPreview();
+}
+
+function renderBar() {
+  const r = cur();
+  $('title').textContent = r ? r.fullName : 'Select a repository';
+  const a = $('actions'); a.innerHTML = '';
+  if (!r) return;
+  const add = (label, onclick, cls) => {
+    const b = document.createElement('button');
+    b.textContent = label; if (cls) b.className = cls; b.onclick = onclick; a.appendChild(b);
+  };
+  if (r.error) { const e = document.createElement('span'); e.style.cssText = 'color:var(--bad);margin-right:6px'; e.textContent = r.error + ' — see logs'; a.appendChild(e); }
+  const act = (path) => async () => { await guarded(r.id, path); setTimeout(refresh, 300); };
+
+  if (r.status === 'uncloned') add('Clone', async () => { await api(`/repos/${r.id}/clone`); setTimeout(refresh, 300); }, 'primary');
+  const term = async () => {
+    const res = await guarded(r.id, 'terminal');
+    if (res && res.status >= 500) alert((await res.json()).error);
+  };
+  if (r.status === 'ready') {
+    if (r.commands?.install) add(r.commands.install.length > 28 ? 'Install' : r.commands.install, act('install'));
+    // Non-web programs (TUIs, CLIs) need a real terminal; web apps run in the background with a preview.
+    const interactive = r.detected?.webApp === false;
+    if (r.commands?.start) {
+      add('▶ Run', act('start'), interactive ? '' : 'primary');
+      add('⌨ Terminal', term, interactive ? 'primary' : '');
+    } else add('⌨ Shell', term, 'primary');
+  } else if (r.status === 'running') add('⌨ Terminal', term);
+  if (r.status === 'running') add('■ Stop', () => api(`/repos/${r.id}/stop`).then(() => setTimeout(refresh, 300)));
+  if (r.status === 'running' && r.port) add(`Open :${r.port} ↗`, () => window.open(`http://127.0.0.1:${r.port}`));
+  if (r.status !== 'uncloned') {
+    add('⚙ Commands', openCommands);
+    add('📝 .env', openEnv);
+  }
+}
+
+// Run an action; if the server says the commands aren't trusted yet, confirm with the user first.
+async function guarded(id, path) {
+  let res = await api(`/repos/${id}/${path}`);
+  if (res.status !== 403) return res;
+  const info = await res.json();
+  if (!info.untrusted) return res;
+  if (!(await confirmTrust(id, info.commands))) return;
+  const t = await api(`/repos/${id}/trust`, 'POST', { hash: info.commands.hash });
+  if (!t.ok) return alert((await t.json()).error);
+  return api(`/repos/${id}/${path}`);
+}
+
+function confirmTrust(id, cmds) {
+  const r = repos.find(x => x.id === id);
+  $('trust-title').textContent = `Run code from ${r.fullName}?`;
+  const box = $('trust-cmds'); box.innerHTML = '';
+  for (const [label, v] of [['Install', cmds.install], ['Start', cmds.start]]) {
+    const d = document.createElement('div');
+    d.innerHTML = `<small style="color:var(--dim)">${label}</small><div class="cmd"></div>`;
+    d.querySelector('.cmd').textContent = v || '(none)';
+    box.appendChild(d);
+  }
+  const dlg = $('dlg-trust');
+  return new Promise((resolve) => {
+    $('trust-ok').onclick = () => { dlg.close(); resolve(true); };
+    $('trust-cancel').onclick = () => { dlg.close(); resolve(false); };
+    dlg.oncancel = () => resolve(false);
+    dlg.showModal();
+  });
+}
+
+function openCommands() {
+  const r = cur(); if (!r) return;
+  $('cmd-install').value = r.custom?.install || '';
+  $('cmd-start').value = r.custom?.start || '';
+  $('cmd-install').placeholder = $('cmd-start').placeholder = 'detected default';
+  $('cmd-det-install').textContent = r.detected?.install ? `(detected: ${r.detected.install})` : '(none detected)';
+  $('cmd-det-start').textContent = r.detected?.start ? `(detected: ${r.detected.start})` : '(none detected)';
+  $('cmd-cancel').onclick = () => $('dlg-cmd').close();
+  $('cmd-save').onclick = async () => {
+    await api(`/repos/${r.id}/commands`, 'PUT', { install: $('cmd-install').value, start: $('cmd-start').value });
+    $('dlg-cmd').close(); refresh();
+  };
+  $('dlg-cmd').showModal();
+}
+
+async function openEnv() {
+  const r = cur(); if (!r) return;
+  const { content, example } = await (await api(`/repos/${r.id}/env`, 'GET')).json();
+  envExample = example;
+  $('env-text').value = content ?? example ?? '';
+  $('env-example').style.display = example ? '' : 'none';
+  $('env-example').onclick = () => { $('env-text').value = envExample; };
+  $('env-key').onclick = () => {
+    const key = Array.from(crypto.getRandomValues(new Uint8Array(32)), b => b.toString(16).padStart(2, '0')).join('');
+    const t = $('env-text'), s = t.selectionStart;
+    t.setRangeText(key, s, t.selectionEnd, 'end'); t.focus();
+  };
+  $('env-cancel').onclick = () => $('dlg-env').close();
+  $('env-save').onclick = async () => {
+    await api(`/repos/${r.id}/env`, 'PUT', { content: $('env-text').value });
+    $('dlg-env').close();
+  };
+  $('dlg-env').showModal();
+}
+
+async function renderPreview() {
+  const r = cur();
+  const url = r?.status === 'running' && r.port ? `http://127.0.0.1:${r.port}` : null;
+  const mode = url ? 'frame:' + url : r && r.status !== 'running' && r.status !== 'uncloned' && !r.commands?.start ? 'readme:' + r.id : 'empty';
+  if (mode === shownView) return;          // don't reload on every poll
+  shownView = mode;
+  const v = $('view');
+  if (url) v.innerHTML = `<iframe src="${url}" sandbox="allow-scripts allow-forms allow-same-origin allow-popups"></iframe>`;
+  else if (mode.startsWith('readme:')) {
+    const text = await (await api(`/repos/${r.id}/readme`, 'GET')).text();
+    if (shownView !== mode) return;
+    v.innerHTML = '<pre id="readme"></pre>';
+    $('readme').textContent = text || 'No README found.';
+  } else v.innerHTML = '<div id="empty">Start a web app to preview it here</div>';
+}
+
+$('save').onclick = async () => { await api('/token', 'POST', { token: $('token').value }); $('token').value = ''; };
+$('sync').onclick = async () => {
+  $('sync').textContent = 'Syncing…';
+  const res = await api('/sync');
+  if (!res.ok) alert((await res.json()).error);
+  $('sync').textContent = 'Sync stars'; refresh();
+};
+$('restart').onclick = async () => {
+  const st = await (await api('/status', 'GET')).json();
+  if (!st.supervised) return alert('RepoHub was not started with "npm start", so it cannot relaunch itself.\nStop it in the terminal and run "npm start" once; after that this button works.');
+  if (st.running && !confirm(`Restarting stops ${st.running} running app(s). Continue?`)) return;
+  const res = await api('/restart');
+  if (!res.ok) return alert((await res.json()).error);
+  $('overlay').classList.add('show');
+  $('overlay-text').textContent = st.running ? 'Stopping apps and restarting RepoHub…' : 'Restarting RepoHub…';
+  // Wait for the server to go down and come back, then reload the page.
+  const t0 = Date.now(); let sawDown = false;
+  const timer = setInterval(async () => {
+    try {
+      const r = await fetch('/api/status', { cache: 'no-store' });
+      if (r.ok && (sawDown || Date.now() - t0 > 30000)) { clearInterval(timer); location.reload(); }
+    } catch { sawDown = true; }
+  }, 700);
+};
+$('filter').oninput = renderList;
+refresh(); setInterval(refresh, 2000);
+</script>
+</body>
+</html>

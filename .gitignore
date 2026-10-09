@@ -1,0 +1,18 @@
+# Dependencies
+node_modules/
+
+# Local state: db.json holds your GitHub token, managed_repos/ holds cloned third-party code
+data/
+managed_repos/
+
+# Secrets and logs
+.env
+.env.*
+!.env.example
+*.log
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

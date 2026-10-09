@@ -1,0 +1,19 @@
+{
+  "name": "repohub",
+  "version": "0.1.0",
+  "description": "A local web UI to clone, install, run and preview your GitHub starred repositories with one click.",
+  "private": true,
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/AhmedKElshahed/RepoHub.git" },
+  "homepage": "https://github.com/AhmedKElshahed/RepoHub#readme",
+  "bugs": { "url": "https://github.com/AhmedKElshahed/RepoHub/issues" },
+  "keywords": ["github", "starred-repos", "launcher", "process-manager", "localhost"],
+  "type": "commonjs",
+  "scripts": {
+    "start": "node supervisor.js",
+    "server": "node server.js",
+    "test": "node --test test/detect.test.js test/github.test.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": { "express": "^4.19.2" }
+}
